@@ -1,0 +1,307 @@
+---
+title: "Analysis Task 2021"
+author: "Stewart Brehaut"
+date: "9/10/2021"
+output:
+  word_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+# Please install and load the following packages. Also, you may have to have Rtools installed on your system or you may be unable to load some of the libraries.
+```{r}
+library(rnoaa)
+library(tidyverse)
+library(tidyr) 
+library(magrittr) 
+library(dplyr)
+library(lubridate) 
+library(ISLR)
+library(skimr)
+library(RcppRoll)
+library(mgcv)   
+library(gamair)
+library(broom)
+library(fitdistrplus)
+library(scales)
+library(tibble)
+library(ggplot2)
+
+```
+
+```{r}
+options(noaakey = "pSWkTBgIBNbEgIsfxzIjFOMsAOANVGxN") 
+perth <- ncdc( datasetid = 'GHCND', stationid = 'GHCND:ASN00009021',
+               startdate ='2013-07-01', enddate = '2014-06-30', limit = 1000)$data
+```
+I have used data from the National Centers for Environmental Information (NOAA). The NOAA has a large amount of weather data from Perth.
+```{r}
+nrow(perth)
+```
+The number of rows in the data set is 1000. The data was limited to 1000 rows when I downloaded the data.
+
+```{r}
+perth %>%
+summarise(start_date = min(date),
+end_date = max(date))
+```
+The time period covered by the data is July 1st 2013 to March 7th 2014. Because we were limited to 1000 rows of data. 
+
+
+
+Model Planning -
+
+The final model will be used to help solve the overcrowding in Western Australian hospitals. Improving the number of patients able to see a doctor before leaving, improving patient satisfaction, and other metrics will improve the Western Australian hospital system.
+
+The potential users of the model include;
+
+The public, the Western Australian state government, the Western Australian health system. The public will benefit knowing how long their wait time could be and how efficient the system is. The state government can use the model to reduce health expenditure and better focus investment. The health system can use the model to improve health efficiency and provide a better service and reduce wait times.
+
+Relationship and data - 
+
+I want to explore the relationship between the date and attendance. I imagine there will be more patients arriving at a hospital on certain dates. The date or time of year also indicates the weather. The response variable is the date and the predictor variable is Attendance. The variables are collected routinely enough (every day) and they are made available soon enough to be used for prediction. A linear model is the most simple to implement and the least computationally expensive. The data has been collected for a long time but the data we're using is only of less than a one year period, part of that period was an extreme heat wave which might not happen again for a long time so data in the future may not have the same characteristics in the future. This is a limitation.
+
+Statistical methods used to generate the model include Linear Model (LM) and a General Additive Model (GAM) which includes a multivariate GAM. An LM is being used because it is a model that describes response variables in a linear combination of predictor variables. It is simple, easy to interpret, and we can use it to give us more information about the curves in the data. The second model used is a GAM. A GAM allows us to model non-linear data while it will still be explainable and provide us insight. The relationship between hospital attendance and the weather could be linear or non-linear so both model approaches are required.
+
+
+
+```{r}
+ed_data_link <- 'govhack3.csv'
+top_row <- read_csv(ed_data_link, col_names = FALSE, n_max = 1)
+second_row <- read_csv(ed_data_link, n_max = 1)
+
+column_names <- second_row %>% 
+  unlist(., use.names=FALSE) %>% 
+  make.unique(., sep = "__") # double underscore
+
+column_names[2:8] <- str_c(column_names[2:8], '0', sep='__')
+
+daily_attendance <- 
+  read_csv(ed_data_link, skip = 2, col_names = column_names)
+
+(
+hospitalnames <- top_row %>%
+unlist(., use.names=FALSE) %>%
+na.omit()
+)
+
+daily_attendance <- daily_attendance %>%
+gather(key = list_var,
+value = values,
+-Date)
+
+daily_attendance <- daily_attendance %>%
+separate(list_var,
+into = c("list_var",
+"hospital_number"),
+sep="__",
+remove=TRUE) %>%
+mutate(hospital_number = as.numeric(hospital_number) + 1) %>%
+mutate(hospitalnames = hospitalnames[hospital_number]) %>%
+dplyr::select(Date, hospitalnames, list_var, values)
+
+daily_attendance <- daily_attendance %>% spread(list_var,values)
+
+daily_attendance <- daily_attendance %>% mutate(Date = dmy(Date))
+
+daily_attendance <- daily_attendance %>% 
+     mutate_at(c(3:9), as.numeric) 
+daily_attendance <- daily_attendance %>%
+  mutate_if(is.numeric, funs(ifelse(is.na(.), 0, .)))
+
+select_hospital <- 'Rockingham General Hospital'
+rockingham <- daily_attendance %>%
+filter(hospitalnames == select_hospital) %>%
+dplyr::select(-hospitalnames) %>%
+arrange(Date)
+
+
+
+```
+For these models we will be using the Attendance from the Rockingham General Hospital.
+
+```{r}
+rockingham <- transform(rockingham, day = as.numeric(format(Date, '%j')))
+```
+# This creates the day column for the rockingham hospital, Janurary 1st is Day 1. So this datasets begins on day 182, July 1st.
+
+```{r}
+lm_rockingham <- lm(Attendance~day , data = rockingham) 
+lm_rockingham
+
+lm_rockingham %>% 
+  summary  
+```
+
+```{r}
+plot(lm_rockingham)
+```
+In this LM there are some outliers or influential observations that have the potential to skew our data. In the Residuals vs Leverage plot you can see 2 or 3 outliers in the top right, and one outlier on the bottom right "193". There are at least three observable outliers. There are also many other observations which are close to the outliers With this many outliers they should not be removed. This plot suggest we should take a non-linear approach to modeling Attendance and Date for Rockingham. The other plots produced by the LM also suggest non-linearity because of the high number of outliers and the uneven spread, the fit is not great. This is why we must also fit a GAM.
+```{r}
+gam_rockingham <- gam(Attendance ~ s(day),data=rockingham,method="REML")
+gam_rockingham
+```
+```{r}
+summary(gam_rockingham)
+```
+
+
+
+
+
+
+```{r}
+coef(gam_rockingham)
+
+augment(gam_rockingham)
+
+glance(gam_rockingham)
+
+tidy(gam_rockingham)
+
+```
+```{r}
+plot(gam_rockingham, rug=TRUE,residuals = TRUE, pch=1, cex=1, shade=TRUE, shade.col="deepskyblue4")
+```
+
+```{r}
+plot(gam_rockingham, seWithMean = TRUE, shift=coef(gam_rockingham)[1])
+```
+```{r}
+gam.check(gam_rockingham)
+```
+```{r}
+concurvity(gam_rockingham, full=TRUE)
+```
+
+We only have one variable, so we don't need to give attention to concurvity.
+
+The generated data above shows the p-value being so low is significant, this suggests the residuals are not just randomly distributed. The GAM has 9 basis functions, thus it has 9 coefficients. It has 6 iterations The model would be better if there were more basis functions. For example, a basis function of 20 encompasses a larger function space than 9. More basis functions would make the model smoother and better. The coefficients for the GAM are better than the LM. 
+
+The plots above show the average number of people arriving at Rockingham hospital is around 150 a day, when other variables are average. The GAM explains 9.4% of the variance, which isn't a great result but better than the LM.
+
+
+```{r}
+rockingham <- transform(rockingham, week = as.numeric(format(Date, '%W')))
+```
+
+# This adds a week column to the rockingham dataset. The 1st week of Janurary is week 0 the last week of the year is 52.
+
+```{r}
+gam_rockingham2 <- gam(Attendance ~ s(day) + s(week),data=rockingham,method="REML")
+gam_rockingham2
+```
+
+```{r}
+gam.check(gam_rockingham2)
+```
+
+```{r}
+summary(gam_rockingham2)
+```
+
+```{r}
+coef(gam_rockingham2)
+```
+
+
+
+```{r}
+plot(gam_rockingham2,rug=TRUE,residuals = TRUE, pch=1, cex=1, shade=TRUE, shade.col="deepskyblue4")
+```
+The plots above are of the multivariate GAM. The summary of the second game model also shows it explains 13.3% of the variation this is almost 4% more than the first model. Comparing the residuals in the Q-Q plot of the 1st and 2nd model, I think the 2nd model looks slightly better. More of the residuals are closer to the line especially at the bottom and top of the line. The pattern is a little hard to see but noticeable.
+
+
+```{r}
+AIC(gam_rockingham2)
+AIC(gam_rockingham)
+AIC(lm_rockingham)
+
+```
+The AIC scores show the best model is the multivariate GAM using weeks and days. 2nd best is the single variable GAM using just days. I think the AIC combined with the analysis of the residuals and the fact the second GAM explains more of the variation. That the 2nd GAM which includes weeks and the day is the better model compared to the LM and single variable GAM.
+
+```{r}
+sapply(rockingham, class)
+```
+The day of the week variables are all numeric. If the variables were changed from numeric to another type of data this would make fitting a model to the data very difficult. The numeric values can be computed and scaled. If it was changed to categorical or ordinal it would be hard to do a linear regression time series model and it would change the model.
+
+
+
+
+
+```{r}
+options(noaakey = "pSWkTBgIBNbEgIsfxzIjFOMsAOANVGxN") 
+perth_avg <- ncdc(datasetid = 'GHCND', datatypeid = 'TAVG', stationid ='GHCND:ASN00009021', startdate = '2013-07-01', enddate = '2014-06-30', limit = 1000
+)$data
+```
+
+
+```{r}
+library(RcppRoll)
+ehf_data <- perth_avg %>%
+  dplyr::mutate(after=roll_meanr(lead(value),3)) %>% 
+  dplyr::mutate(ehf = after-30)
+
+```
+
+```{r}
+ehf_data <- mutate_at(ehf_data, c("ehf"), ~replace(., is.na(.), 0))
+```
+# I replaced the NA ehf values with 0, I'm not sure if this was the correct thing to do or not. I had lots of trouble creating the ehf_data and the ehf column inside the ehf_data. I hope it is running correctly.
+```{r}
+perth_avg %>% 
+  mutate(date = ymd_hms(ehf_data$date)) %>% 
+  ggplot(aes(x=date, y=ehf_data$ehf)) + 
+  geom_line(color='deepskyblue4') + 
+  ylab("Excess Heat Factor (EHF)")
+```
+The above plot shows the extreme heat factor was very high from December to March.
+
+
+```{r}
+gam_ehf <- gam(Attendance ~ s(day) + s(ehf_data$ehf), data=rockingham, method="REML")
+```
+
+```{r}
+glance(gam_ehf)
+summary(gam_ehf)
+```
+
+```{r}
+plot(gam_ehf, rug=TRUE, residuals = TRUE, pch=1, cex=1, shade=TRUE, shade.col="deepskyblue4")
+gam.check(gam_ehf)
+```
+
+
+
+I think it makes the model somewhat worse that the 2nd GAM but better than the 1st GAM and the LM. The explained deviance is lower and the residual plots look more scattered and worse than the 2nd GAM. So, it makes it somewhat better than the 1st two models. However the p-value for the EHF variable as shown above is 0.26 which would indicate it doesn't have an affect or if it does it's very small.
+```{r}
+gam_with_extra <- gam(Attendance ~s(day)+s(ehf_data$ehf)+s(ehf_data$value), data=rockingham, method="REML")
+
+glance(gam_with_extra)
+summary(gam_with_extra)
+
+
+plot(gam_with_extra, rug=TRUE, residuals = TRUE, pch=1, cex=1, shade=TRUE, shade.col="cyan4")
+gam.check(gam_with_extra)
+```
+
+I wasn't able to find data sufficient additional data to include and I wasn't sure what data to include. So to include an additional extreme weather feature, I have used the average daily temperature value as a variable in the GAM. As you can see above the P-value of this additional variable is almost 1. So in this model it has almost no impact on hospital attendance at all. I don't think the introduction of this variable has really improved the model at all. 
+
+There are a number of extreme weather events that could impact hospital demand. Floods, hurricanes, storms, extreme cold, and heat. Exploring these in a model would be worthwhile.
+
+
+
+We used historical hospital attendance data to create our regression models. In using this historical data, we must also believe that the historical attendance data has some predictive power to predict future hospital attendance numbers. Using historical data has limitations. The older historical data is, the more inaccurate and outdated it usually is. Making long predictions into the future requires more and more historical data to be accurate. Historical data doesn't always show an accurate underlying trend. Extreme events like hurricanes, floods, extreme heat waves can distort a normal trend. In this assignment using hospital attendance data there was also a heat wave during the same period this could have distorted the trend and made it difficult to use a regression model to make future predictions (Connector, 2021). 
+
+In this assignment we are exploring Western Australian hospital demand and its connection to weather events, most notably heat waves. In this assignment I don't think we need to focus the regression model on understanding a process or making future predictions. I think it's possible to do both. but I think our regression model is better used for understanding a process. Namely, understanding what happens to a hospital during an extreme heatwave or other weather event. For this assignment we only use one year of data. This isn't enough to make very accurate long-term predictions. As explained above our prediction ability is limited by having only one year of data, also during this year there was an extreme weather event. The year is perhaps not typical of other years and it would be improper to use this model for long term prediction. The resulting LM would be a poor at predicting. It would be better to use the model to try and explain and understand what the health system, WA government, and the public can do during an extreme weather event and attending a hospital. If we wanted to use the model for long-term prediction, we would need to collect more data and remove some of the extreme outliers such as the weather events to predict future hospital attendance accurately (IBM, 2021).
+
+I think my analyses have answered or somewhat answered the questions that I set out to answer. It would be easier to answer these questions if we had many more years’ worth of data especially if we had data on previous extreme weather events and their impact on hospital attendance. The models made in this assignment have shown that extreme weather events do have an impact on hospital attendance, but it doesn't explain all the variation. With higher temperatures you are likely to see more people attending a hospital. There are numerous articles online detailing this effect. (https://www.abc.net.au/news/2019-12-02/perth-has-gone-three-summers-without-heatwave-but-its-warming-up/11753340) This article shows that extreme heat deaths in Australia account for 55% of all-natural hazard deaths. The models created for this assignment can be used by the WA government, and health service to develop preventative measures to mitigate the increase in hospital attendance due to extreme heat. This could include education programs, government alerts and text messages during hot periods. The public can use this information to be better informed about the impact of heat waves, that heat waves cause more deaths and hospital attendance than all other natural hazard events.
+
+
+
+Connector. 2021. Limitations of historical data. [online] Available at: <https://support.onesaas.com/hc/en-us/articles/204756914-Limitations-of-historical-data> [Accessed 17 September 2021].
+
+Ibm.com. 2021. About Linear Regression | IBM. [online] Available at: <https://www.ibm.com/topics/linear-regression> [Accessed 20 September 2021].
